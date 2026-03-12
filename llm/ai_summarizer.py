@@ -5,7 +5,7 @@ from typing import Dict, Iterable, List
 from .base_llm import BaseLLM
 from .claude_provider import ClaudeProvider
 from .gemini_provider import GeminiProvider
-from ..config import Settings
+from config import Settings
 
 
 class AISummarizer:

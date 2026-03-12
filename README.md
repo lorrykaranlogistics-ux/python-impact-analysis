@@ -43,6 +43,27 @@ Create a `.env` file or set environment variables directly. The agent reads the 
 python main.py --repo my-org/order-service --pr 142
 ```
 
+You can also pass a full GitHub repository URL (with or without `.git`) and the CLI will normalize it to the expected `owner/name` form.
+
+
+```bash
+python main.py --repo https://github.com/lorrykaranlogistics-ux/node-example-microservices --pr 4
+```
+
+
+
+Branch and tag analysis no longer requires an open PR. Provide the target ref and optional `--base-ref` (defaults to `main`):
+
+```bash
+python main.py --repo my-org/order-service --branch feature/awesome --base-ref main
+
+python main.py --repo https://github.com/lorrykaranlogistics-ux/node-example-microservices --branch feature/order-route --base-ref main
+
+python main.py --repo my-org/order-service --tag v2.0.0 --base-ref main
+```
+
+Only one of `--pr`, `--branch`, or `--tag` can be supplied per run.
+
 Optional local scan of service directories:
 
 ```bash

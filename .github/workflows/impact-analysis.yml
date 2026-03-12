@@ -1,0 +1,38 @@
+name: Impact Analysis & Tests
+
+on:
+  push:
+    branches:
+      - main
+      - '**/feature/**'
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  impact-analysis:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: 3.12
+      - name: Install dependencies
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Run pytest
+        run: |
+          source .venv/bin/activate
+          python -m pytest
+      - name: Run impact analysis
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+          GITLAB_PROJECT_MAP: ${{ secrets.GITLAB_PROJECT_MAP }}
+          SCAN_REPOSITORIES: ${{ secrets.SCAN_REPOSITORIES }}
+        run: |
+          source .venv/bin/activate
+          python main.py --repo lorrykaranlogistics-ux/node-example-microservices --branch feature/order-route --base-ref master

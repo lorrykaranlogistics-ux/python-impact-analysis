@@ -4,8 +4,8 @@ import re
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Set
 
-from ..analysis.change_classifier import ChangeCategory, ChangeClassifier
-from ..config import Settings
+from analysis.change_classifier import ChangeCategory, ChangeClassifier
+from config import Settings
 
 
 API_PATTERN = re.compile(r"[\'\"](/[-\w_/]+)[\'\"]")

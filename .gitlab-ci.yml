@@ -1,0 +1,28 @@
+stages:
+  - test
+  - impact
+
+variables:
+  PYTHON_VERSION: "3.12"
+
+before_script:
+  - python -m venv .venv
+  - source .venv/bin/activate
+  - python -m pip install --upgrade pip
+  - pip install -r requirements.txt
+
+pytest:
+  stage: test
+  script:
+    - python -m pytest
+
+impact_analysis:
+  stage: impact
+  needs: [pytest]
+  script:
+    - python main.py --repo lorrykaranlogistics-ux/node-example-microservices --branch feature/order-route --base-ref master
+  variables:
+    GITHUB_TOKEN: $GITHUB_TOKEN
+    GITLAB_TOKEN: $GITLAB_TOKEN
+    GITLAB_PROJECT_MAP: $GITLAB_PROJECT_MAP
+    SCAN_REPOSITORIES: $SCAN_REPOSITORIES

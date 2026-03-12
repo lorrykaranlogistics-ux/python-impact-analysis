@@ -4,7 +4,7 @@ from typing import Any, Dict
 
 import httpx
 
-from ..config import Settings
+from config import Settings
 
 
 class GitLabClient:

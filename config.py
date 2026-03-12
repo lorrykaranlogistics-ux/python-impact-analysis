@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional
 
-from pydantic import BaseSettings, Field, HttpUrl
+from pydantic import Field, HttpUrl
+from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
