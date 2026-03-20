@@ -43,12 +43,30 @@ Create a `.env` file or set environment variables directly. The agent reads the 
 python main.py --repo my-org/order-service --pr 142
 ```
 
-You can also pass a full GitHub repository URL (with or without `.git`) and the CLI will normalize it to the expected `owner/name` form.
+You can also pass a full GitHub or GitLab repository URL (with or without `.git`) and the CLI will normalize it to the expected `owner/name` form.
 
-
+For GitHub PR analysis:
 ```bash
-python main.py --repo https://github.com/lorrykaranlogistics-ux/node-example-microservices --pr 4
+python main.py --repo https://github.com/<org>/<repo> --pr 1
 ```
+
+For GitLab merge request analysis:
+```bash
+python main.py --repo https://gitlab.com/sivamanismca/micro-service-users --pr 1
+
+python main.py --repo ... --pr 1 --scan-local-repos users --run-tests
+
+
+python main.py --repo https://gitlab.com/sivamanismca/micro-service-users --pr 1 --scan-local-repos users --run-tests
+
+
+
+python main.py --repo https://gitlab.com/sivamanismca/micro-service-users  --pr 1 \
+  --scan-local-repos ../micro-services/users ../micro-services/notifications ../micro-services/products ../micro-services/payments \
+  --run-tests
+
+```
+
 
 
 
@@ -57,7 +75,7 @@ Branch and tag analysis no longer requires an open PR. Provide the target ref an
 ```bash
 python main.py --repo my-org/order-service --branch feature/awesome --base-ref main
 
-python main.py --repo https://github.com/lorrykaranlogistics-ux/node-example-microservices --branch feature/order-route --base-ref main
+python main.py --repo https://gitlab.com/sivamanismca/micro-service-usershttps://gitlab.com/sivamanismca/micro-service-users --branch feature/route --base-ref master
 
 python main.py --repo my-org/order-service --tag v2.0.0 --base-ref main
 ```
@@ -68,6 +86,12 @@ Optional local scan of service directories:
 
 ```bash
 python main.py --repo my-org/orders --pr 142 --scan-local-repos ./microservices
+```
+
+Run tests in impacted local services before regression trigger:
+
+```bash
+python main.py --repo my-org/orders --pr 142 --scan-local-repos ./microservices --run-tests
 ```
 
 The CLI prints the summary and writes the JSON file into the configured `reports/` directory.
@@ -82,3 +106,15 @@ pytest
 - Add additional sensitive patterns via `config.py`.
 - Plug in different LLM providers by extending `llm/base_llm.py`.
 - Enhance dependency scanning (e.g., parse AST), or map GitLab projects dynamically.
+
+## Mock microservice order workflow
+
+The new `microservices` package demonstrates how an `OrderMicroserviceOrchestrator` can wire together HTTP-style API calls across
+the mock services (`orders`, `inventory`, `payments`, `notifications`, `users`). Run the orchestration demo with:
+
+```bash
+python -m microservices
+```
+
+The orchestrator uses mock endpoints by default—any `mock://` prefixed service is handled locally with deterministic payloads and
+logs each step. Override `DEFAULT_SERVICE_ENDPOINTS` when you want to point to real services or swap in HTTP clients for integration tests.

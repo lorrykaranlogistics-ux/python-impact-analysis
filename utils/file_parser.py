@@ -11,6 +11,8 @@ def find_endpoints_in_directory(directory: Path, endpoints: Iterable[str]) -> Di
     for path in directory.rglob("*"):
         if not path.is_file() or path.suffix in {".pyc", ".lock"}:
             continue
+        if any(part in {"node_modules", ".git", "venv"} for part in path.parts):
+            continue
         try:
             text = path.read_text(errors="ignore")
         except OSError:  # pragma: no cover - ignore unreadable

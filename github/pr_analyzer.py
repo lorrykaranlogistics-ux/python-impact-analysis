@@ -19,6 +19,9 @@ class PRAnalysis:
     sensitive_changes: List[str]
     endpoints: Set[str]
     categories: List[ChangeCategory]
+    category_counts: Dict[str, int]
+    payload_response_changes: bool
+    changed_urls: Set[str]
 
 
 class PRAnalyzer:
@@ -31,18 +34,31 @@ class PRAnalyzer:
         sensitive: Set[str] = set()
         categories: List[ChangeCategory] = []
         endpoints: Set[str] = set()
+        category_counts: Dict[str, int] = {}
         count = 0
+        payload_response_changes = False
+        changed_urls: Set[str] = set()
+
         for info in files:
             filename = info.get("filename", "")
             additions += info.get("additions", 0)
             deletions += info.get("deletions", 0)
             count += 1
-            categories.append(self.classifier.classify(filename))
+            category = self.classifier.classify(filename)
+            categories.append(category)
+            category_counts[category.value] = category_counts.get(category.value, 0) + 1
             if self.classifier.sensitive_changes([filename]):
                 sensitive.add(filename)
             patch = info.get("patch") or ""
             for match in API_PATTERN.findall(patch):
                 endpoints.add(match)
+
+            # Heuristics for payload/response impact: request/response schema snippets, payload keys, and URL updates
+            if re.search(r"\b(payload|request body|response body|schema|dto)\b", patch, flags=re.I):
+                payload_response_changes = True
+            for url_match in re.findall(r"[\'\"](/[-\w_/]+)[\'\"]", patch):
+                changed_urls.add(url_match)
+
         return PRAnalysis(
             files_changed=count,
             total_additions=additions,
@@ -50,6 +66,9 @@ class PRAnalyzer:
             sensitive_changes=sorted(sensitive),
             endpoints=endpoints,
             categories=categories,
+            category_counts=category_counts,
+            payload_response_changes=payload_response_changes,
+            changed_urls=changed_urls,
         )
 
     def api_change_detected(self, categories: Iterable[ChangeCategory]) -> bool:

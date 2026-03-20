@@ -22,6 +22,7 @@ class Settings(BaseSettings):
         default="https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro",
         env="GEMINI_API_URL",
     )
+    llm_provider: Optional[str] = Field("auto", env="LLM_PROVIDER")
 
     sensitive_paths: List[str] = Field(
         default_factory=lambda: [
