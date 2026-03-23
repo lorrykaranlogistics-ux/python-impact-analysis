@@ -3,7 +3,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import re
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any, Dict, List, Set
 from urllib.parse import urlparse
 
@@ -14,11 +16,20 @@ from github.github_client import GitHubClient
 from github.pr_analyzer import PRAnalyzer
 from gitlab.gitlab_client import GitLabClient
 from gitlab.regression_runner import RegressionRunner
+from analysis.code_advisor import CodeAdvice, build_code_advice
+from analysis.impact_report import (
+    CORE_MONITORED_SERVICES,
+    DOWNSTREAM_MAPPING,
+    build_code_suggestions,
+    build_solution_suggestion,
+    detect_core_service_impact,
+    sanitize_ref,
+)
+from analysis.scan_roots import resolve_scan_roots
 from analysis.dependency_scanner import DependencyScanner
 from risk.risk_engine import RiskEngine
 from llm.ai_summarizer import AISummarizer
 from utils.logger import setup_logger
-from pathlib import Path
 import subprocess
 
 logger = setup_logger()
@@ -40,8 +51,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--scan-local-repos",
         nargs="+",
-        type=Path,
-        help="Optional local directories containing other services to scan (e.g. users notifications products)",
+        type=str,
+        help=(
+            "Optional local directories or remote git URLs (GitLab/GitHub) that "
+            "contain other services to scan for downstream impact"
+        ),
     )
     parser.add_argument(
         "--run-tests",
@@ -95,80 +109,31 @@ def is_gitlab_repo(repo: str) -> bool:
     return candidate.startswith("gitlab.com/")
 
 
-def sanitize_ref(ref: str) -> str:
-    return ref.replace("/", "_").replace(" ", "_")
+def find_gitlab_project_id(service: str, project_map: Dict[str, int]) -> int | None:
+    target = service.lower()
+    if target in project_map:
+        return project_map[target]
+    for key, project_id in project_map.items():
+        normalized = key.lower()
+        candidate = normalized.split("/")[-1]
+        if candidate == target or candidate.endswith(f"-{target}") or candidate.endswith(f"_{target}"):
+            return project_id
+        tokenized = re.split(r"[-_/]", candidate)
+        if target in tokenized:
+            return project_id
+    return None
 
 
-CORE_MONITORED_SERVICES = ["users", "notifications", "orders", "products", "payments"]
-
-DOWNSTREAM_MAPPING = {
-    "users": ["orders", "payments", "products"],
-    "orders": ["payments", "products"],
-    "payments": [],
-    "products": [],
-    "notifications": [],
-}
-
-
-def detect_core_service_impact(services: List[str]) -> List[str]:
-    impacted_core: Set[str] = set()
-    for service in services:
-        normalized = service.lower()
-        for core in CORE_MONITORED_SERVICES:
-            if core in normalized:
-                impacted_core.add(core)
-    return sorted(impacted_core)
-
-
-def build_solution_suggestion(
-    risk: Dict[str, Any],
-    impacted_services: List[str],
-    downstream_services: List[str],
-    sensitive_changes: List[str],
-    api_change: bool,
-    db_model_change: bool,
-    impacted_core_services: List[str] | None = None,
-    payload_response_changes: bool = False,
-    changed_urls: List[str] | None = None,
-) -> str:
-    suggestions: List[str] = []
-    suggestions.append(f"Risk score {risk['score']} ({risk['level']})")
-
-    if impacted_services:
-        suggestions.append(f"Impacted services/repositories detected: {', '.join(impacted_services)}")
-    else:
-        suggestions.append("No impacted services/repositories detected by static scan.")
-
-    if sensitive_changes:
-        suggestions.append("Sensitive paths/files changed; require extra review and security signoff.")
-    if api_change:
-        suggestions.append("API behavior changed; run API contract tests and notify downstream consumers.")
-    if db_model_change:
-        suggestions.append("Database model change detected; coordinate migration scripts and freeze dependency upgrades.")
-    if downstream_services:
-        suggestions.append(
-            f"Predicted downstream impacted services: {', '.join(downstream_services)}. "
-            "Validate each service contract, adjust payload/response mappings, and run downstream tests."
-        )
-    if impacted_services and ("orders" in impacted_services or "payments" in impacted_services or "products" in impacted_services):
-        suggestions.append("Downstream core services flagged: run full e2e flow and regression for orders/payments/products.")
-    if payload_response_changes:
-        suggestions.append("Payload/response schema changes detected; verify dependent consumers still pass contract tests.")
-    if changed_urls:
-        suggestions.append("URL route modifications detected; update API gateway/consumer docs and integrations.")
-    if impacted_core_services:
-        suggestions.append(
-            f"Monitored core services affected: {', '.join(impacted_core_services)}."
-        )
-
-    if risk["level"] in ("HIGH", "CRITICAL"):
-        suggestions.append("Immediate action: block merge until regression pipelines pass, add/adjust tests, and issue cross-service rollout plan.")
-    elif risk["level"] == "MEDIUM":
-        suggestions.append("Action: prioritize end-to-end tests, manual validation of affected endpoints, and team communication.")
-    else:
-        suggestions.append("Action: continue with standard review and deploy checks; monitor impacted paths post-release.")
-
-    return " ".join(suggestions)
+def resolve_service_name(path: Path, overrides: Dict[Path, str]) -> str | None:
+    current = path
+    while True:
+        name = overrides.get(current)
+        if name:
+            return name
+        if current.parent == current:
+            break
+        current = current.parent
+    return path.name
 
 
 def run_local_tests_for_service(service_dir: Path) -> Dict[str, Any]:
@@ -182,6 +147,10 @@ def run_local_tests_for_service(service_dir: Path) -> Dict[str, Any]:
     test_cmd = ["npm", "test"]
     result["status"] = "failed"
     result["message"] = "unknown"
+    scan_roots: List[Path] = []
+    temp_scan_dirs: List[TemporaryDirectory] = []
+    scan_roots: List[Path] = []
+    temp_scan_dirs: List[TemporaryDirectory] = []
     try:
         proc = subprocess.run(test_cmd, cwd=service_dir, capture_output=True, text=True, timeout=600)
         result["output"] = proc.stdout + proc.stderr
@@ -285,6 +254,9 @@ async def main() -> None:
         target_ref = ""
         base_ref = None
         files: List[Dict[str, Any]] = []
+        scan_roots: List[Path] = []
+        temp_scan_dirs: List[TemporaryDirectory] = []
+        auto_cloned_service_names: Dict[Path, str] = {}
         if args.pr is not None:
             if is_gitlab:
                 pr_details = await gitlab_client.fetch_merge_request(repo, args.pr)
@@ -343,11 +315,12 @@ async def main() -> None:
         endpoints = analysis.endpoints
         changed_files = [info.get("filename", "") for info in files]
 
-        scan_roots: List[Path] = []
         if args.scan_local_repos:
-            for root_path in args.scan_local_repos:
-                resolved = root_path if root_path.is_absolute() else (Path.cwd() / root_path).resolve()
-                scan_roots.append(resolved)
+            scan_roots, temp_scan_dirs = resolve_scan_roots(
+                args.scan_local_repos,
+                github_token=settings.github_token,
+                gitlab_token=settings.gitlab_token,
+            )
 
         impacted_services: List[str] = []
         if endpoints:
@@ -361,6 +334,42 @@ async def main() -> None:
                     predicted_downstream_services.update(downstream)
 
         predicted_downstream_services = sorted(predicted_downstream_services)
+
+        if not scan_roots and predicted_downstream_services:
+            auto_cloned_services: Set[str] = set()
+            for service in predicted_downstream_services:
+                if service in auto_cloned_services:
+                    continue
+                project_id = find_gitlab_project_id(service, settings.gitlab_project_map)
+                if not project_id:
+                    continue
+                try:
+                    project_info = await gitlab_client.get_project(project_id)
+                except httpx.HTTPStatusError as exc:
+                    logger.warning(
+                        "Unable to fetch GitLab project %s for service %s (%s)",
+                        project_id,
+                        service,
+                        exc,
+                    )
+                    continue
+                repo_url = project_info.get("http_url_to_repo")
+                if not repo_url:
+                    continue
+                try:
+                    roots, temps = resolve_scan_roots(
+                        [repo_url],
+                        github_token=settings.github_token,
+                        gitlab_token=settings.gitlab_token,
+                    )
+                except RuntimeError as exc:
+                    logger.warning("Failed to clone downstream repo %s: %s", repo_url, exc)
+                    continue
+                scan_roots.extend(roots)
+                temp_scan_dirs.extend(temps)
+                auto_cloned_services.add(service)
+                for root in roots:
+                    auto_cloned_service_names[root] = service
 
         local_matches = {}
         local_service_dirs: Set[Path] = set()
@@ -377,8 +386,9 @@ async def main() -> None:
                         if child.is_dir() and (child / "package.json").exists()
                     ]
 
-            if endpoints and scan_root.exists():
-                found = dependency_scanner.local_impact(endpoints, scan_root)
+            search_terms = set(endpoints) | set(analysis.changed_urls)
+            if search_terms and scan_root.exists():
+                found = dependency_scanner.local_impact(search_terms, scan_root)
                 for endpoint, paths in found.items():
                     local_matches.setdefault(endpoint, []).extend(paths)
                 for endpoint, paths in found.items():
@@ -401,7 +411,12 @@ async def main() -> None:
                 local_service_dirs.update(service_roots)
 
         # Add impacted service names instead of raw endpoint values
-        impacted_services.extend(sorted({d.name for d in local_service_dirs if d.name}))
+        impacted_service_names: Set[str] = set()
+        for service_dir in local_service_dirs:
+            service_name = resolve_service_name(service_dir, auto_cloned_service_names)
+            if service_name:
+                impacted_service_names.add(service_name)
+        impacted_services.extend(sorted(impacted_service_names))
 
         # Always expose impacted service names from local dirs when running tests
         if args.run_tests:
@@ -457,6 +472,21 @@ async def main() -> None:
             payload_response_changes=analysis.payload_response_changes,
             changed_urls=sorted(analysis.changed_urls),
         )
+
+        code_suggestions = build_code_suggestions(
+            changed_urls=sorted(analysis.changed_urls),
+            payload_response_changes=analysis.payload_response_changes,
+            impacted_services=impacted_services,
+            sensitive_changes=analysis.sensitive_changes,
+            endpoints=sorted(analysis.endpoints),
+        )
+        code_advice_entries = build_code_advice(
+            local_matches,
+            sorted(analysis.changed_urls),
+            analysis.payload_response_changes,
+            impacted_services,
+        )
+        code_advice = [entry.to_dict() for entry in code_advice_entries]
 
         current_change_summary = (
             f"{analysis.files_changed} files changed, {analysis.total_additions} additions, "
@@ -517,6 +547,8 @@ async def main() -> None:
                 str(p): [str(path) for path in paths]
                 for p, paths in local_matches.items()
             },
+            "code_suggestions": code_suggestions,
+            "code_advice": code_advice,
         }
 
         target_identifier = sanitize_ref(target_ref or analysis_mode)
@@ -544,12 +576,26 @@ async def main() -> None:
         print(f"Impacted services: {', '.join(impacted_services) or 'none'}")
         print(f"Regression failures: {', '.join(regression_failures) or 'none'}")
         print(f"Suggested solution: {solution_suggestion}")
+        if code_suggestions:
+            print("Code suggestions:")
+            for suggestion in code_suggestions:
+                print(f"  - {suggestion}")
+        if code_advice_entries:
+            print("Detailed code advice:")
+            for advice in code_advice_entries:
+                print(
+                    f"  - {advice.reason} ({advice.file}:{advice.line})\n"
+                    f"    current: {advice.current_code}\n"
+                    f"    suggestion: {advice.suggested_code}"
+                )
         print(f"Report saved: {report_file}")
     finally:
         await github_client.close()
         await gitlab_client.close()
         if ai_summarizer:
             await ai_summarizer.close()
+        for temp_dir in temp_scan_dirs:
+            temp_dir.cleanup()
 
 
 if __name__ == "__main__":

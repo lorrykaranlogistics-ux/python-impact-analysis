@@ -66,5 +66,10 @@ class GitLabClient:
         response.raise_for_status()
         return response.json()
 
+    async def get_project(self, project_id: int) -> Dict[str, Any]:
+        response = await self.client.get(f"/projects/{project_id}")
+        response.raise_for_status()
+        return response.json()
+
     async def close(self) -> None:
         await self.client.aclose()

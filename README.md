@@ -15,7 +15,7 @@ A Python 3.11+ CLI tool that analyzes GitHub pull requests, detects downstream m
 ## Installation
 
 ```bash
-python -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
