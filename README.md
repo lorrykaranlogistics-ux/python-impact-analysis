@@ -68,6 +68,19 @@ python main.py --repo https://gitlab.com/sivamanismca/micro-service-users  --pr 
 ```
 
 
+```bash
+python main.py \
+  --repo https://gitlab.com/sivamanismca/micro-service-users \
+  --pr 1 \
+  --scan-local-repos \
+    https://gitlab.com/sivamanismca/micro-service-notifications \
+    https://gitlab.com/sivamanismca/micro-services/users \
+    https://gitlab.com/sivamanismca/micro-services/products \
+    https://gitlab.com/sivamanismca/micro-services/payments \
+  --run-tests
+
+```
+
 
 
 Branch and tag analysis no longer requires an open PR. Provide the target ref and optional `--base-ref` (defaults to `main`):

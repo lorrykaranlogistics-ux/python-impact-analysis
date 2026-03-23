@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -35,10 +36,28 @@ def _inject_token(url: str, github_token: str | None, gitlab_token: str | None) 
     return url
 
 
-def clone_remote_repo(url: str, github_token: str | None, gitlab_token: str | None) -> Tuple[Path, TemporaryDirectory]:
+def _normalize_gitlab_services_url(url: str) -> str | None:
+    parsed = urlparse(url)
+    host = parsed.netloc.lower()
+    if "gitlab.com" not in host:
+        return None
+    path = parsed.path
+    match = re.search(r"/micro-services/([^/]+?)(\.git)?$", path)
+    if not match:
+        return None
+    base = path[: match.start()]
+    service = match.group(1)
+    suffix = match.group(2) or ""
+    fallback_path = f"{base}/micro-service-{service}{suffix}"
+    if fallback_path == path:
+        return None
+    return urlunparse(parsed._replace(path=fallback_path))
+
+
+def _attempt_clone(url: str, github_token: str | None, gitlab_token: str | None) -> Tuple[Path, TemporaryDirectory]:
     temp_dir = TemporaryDirectory(prefix="impact-scan-")
+    auth_url = _inject_token(url, github_token, gitlab_token)
     try:
-        auth_url = _inject_token(url, github_token, gitlab_token)
         subprocess.run(
             ["git", "clone", "--depth", "1", auth_url, temp_dir.name],
             check=True,
@@ -49,6 +68,19 @@ def clone_remote_repo(url: str, github_token: str | None, gitlab_token: str | No
         temp_dir.cleanup()
         raise RuntimeError(f"Failed to clone remote repo {url}: {exc.stderr.strip()}") from exc
     return Path(temp_dir.name), temp_dir
+
+
+def clone_remote_repo(url: str, github_token: str | None, gitlab_token: str | None) -> Tuple[Path, TemporaryDirectory]:
+    try:
+        return _attempt_clone(url, github_token, gitlab_token)
+    except RuntimeError as exc:
+        fallback_url = _normalize_gitlab_services_url(url)
+        if fallback_url:
+            try:
+                return _attempt_clone(fallback_url, github_token, gitlab_token)
+            except RuntimeError:
+                pass
+        raise exc
 
 
 def resolve_scan_roots(

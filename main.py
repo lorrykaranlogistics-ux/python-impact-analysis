@@ -143,8 +143,30 @@ def run_local_tests_for_service(service_dir: Path) -> Dict[str, Any]:
         result["message"] = "directory not found"
         return result
 
+    def _npm_install() -> bool:
+        if not (service_dir / "package.json").exists():
+            return False
+        try:
+            subprocess.run(
+                ["npm", "install"],
+                cwd=service_dir,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=600,
+            )
+        except subprocess.SubprocessError as exc:
+            result["output"] = getattr(exc, "stdout", "") + getattr(exc, "stderr", "")
+            result["message"] = "install failed"
+            return False
+        return True
+
     # prefer npm test for JS services
     test_cmd = ["npm", "test"]
+    result["output"] = ""
+    if not _npm_install():
+        result["status"] = "failed"
+        return result
     result["status"] = "failed"
     result["message"] = "unknown"
     scan_roots: List[Path] = []

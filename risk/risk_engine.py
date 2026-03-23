@@ -53,6 +53,8 @@ class RiskEngine:
         changed_url_count = len(list(changed_urls)) if changed_urls is not None else 0
         self.score += min(changed_url_count * 10, 30)
 
+        self.score = max(0, min(self.score, 100))
+
         risk_level = self._get_risk_level(self.score)
         return {"score": self.score, "level": risk_level}
 
